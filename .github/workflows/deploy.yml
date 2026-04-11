@@ -1,0 +1,59 @@
+name: Deploy to Amazon ECR Public
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
+
+      - name: Build Docker image
+        run: docker build -t notification-service:latest .
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR Public
+        run: |
+          aws ecr-public get-login-password --region us-east-1 | \
+          docker login --username AWS --password-stdin public.ecr.aws
+
+      - name: Push Docker image to ECR Public
+        run: |
+          IMAGE_URI=public.ecr.aws/q7r9n9o9/ciberaccion/notification-service:latest
+          docker tag notification-service:latest $IMAGE_URI
+          docker push $IMAGE_URI
+
+      - name: Start ECS service
+        run: |
+          aws ecs update-service \
+            --cluster paypro-cluster \
+            --service notification-service \
+            --desired-count 1 \
+            --region us-east-1
+
+      - name: Force ECS redeploy
+        run: |
+          aws ecs update-service \
+            --cluster paypro-cluster \
+            --service notification-service \
+            --force-new-deployment \
+            --region us-east-1
